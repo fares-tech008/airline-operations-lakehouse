@@ -249,20 +249,47 @@ Version Control:
 ```text
 airline-operations-lakehouse/
 
-├── notebooks/
-│   ├── 01_bronze_ingestion.py
-│   ├── 02_silver_layer.py
-│   ├── 03_gold_layer.py
-│   ├── ...
-│   └── 11_platform_orchestration.py
+├── README.md
+├── .gitignore
 │
 ├── docs/
+│   ├── architecture.png
+│   └── architecture.md
+│
+├── notebooks/
+│   ├── 01_bronze_ingestion.py
+│   ├── 02_silver_transformation.py
+│   ├── 03_gold_fact_flights.py
+│   ├── 04_gold_dim_airport.py
+│   ├── 05_gold_dim_date.py
+│   ├── 06_data_quality_framework.py
+│   ├── 07_audit_framework.py
+│   ├── 08_incremental_loading.py
+│   ├── 09_pipeline_monitoring.py
+│   └── 10_platform_orchestration.py
+│
+├── src/
+│   ├── audit/
+│   │   └── audit_utils.py
+│   │
+│   ├── quality/
+│   │   └── quality_utils.py
+│   │
+│   ├── monitoring/
+│   │   └── monitoring_utils.py
+│   │
+│   └── orchestration/
+│       └── orchestration_utils.py
 │
 ├── sql/
+│   ├── business_queries.sql
+│   ├── validation_queries.sql
+│   └── monitoring_queries.sql
 │
-├── tests/
-│
-└── README.md
+└── tests/
+    ├── test_data_quality.py
+    ├── test_fact_flights.py
+    └── test_pipeline_metrics.py
 ```
 
 ---
