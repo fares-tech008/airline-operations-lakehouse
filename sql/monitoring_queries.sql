@@ -1,107 +1,103 @@
 -- ============================================================
 -- Airline Operations Lakehouse
--- Monitoring & Operational Queries
+-- Monitoring & Operational Queries 
 -- ============================================================
 
--- 1. Latest pipeline executions
+-- 1. Latest pipeline runs
 
 SELECT *
-FROM workspace.gold.pipeline_audit
-ORDER BY start_time DESC;
+FROM workspace.ops.run_summary
+ORDER BY run_started DESC;
 
 
--- 2. Failed pipeline executions
+-- 2. Failed pipeline runs
 
 SELECT *
-FROM workspace.gold.pipeline_audit
-WHERE status = 'FAIL'
-ORDER BY start_time DESC;
+FROM workspace.ops.run_summary
+WHERE run_status = 'FAILED'
+ORDER BY run_started DESC;
 
 
--- 3. Average pipeline runtime
+-- 3. Average runtime per step
 
 SELECT
-    pipeline_name,
+    step_name,
     ROUND(AVG(duration_seconds), 2) AS avg_runtime_seconds
-FROM workspace.gold.pipeline_audit
-GROUP BY pipeline_name
+FROM workspace.ops.audit_log
+GROUP BY step_name
 ORDER BY avg_runtime_seconds DESC;
 
 
--- 4. Total rows processed by pipeline
+-- 4. Rows processed by the latest run of each step
 
-SELECT
-    pipeline_name,
-    SUM(rows_processed) AS total_rows_processed
-FROM workspace.gold.pipeline_audit
-GROUP BY pipeline_name
-ORDER BY total_rows_processed DESC;
+SELECT step_name, rows_processed, status, ended_at
+FROM (
+    SELECT *, ROW_NUMBER() OVER (PARTITION BY step_name ORDER BY ended_at DESC) AS rn
+    FROM workspace.ops.audit_log
+)
+WHERE rn = 1
+ORDER BY step_name;
 
 
 -- 5. Latest data quality results
 
 SELECT *
-FROM workspace.gold.data_quality_results
-ORDER BY execution_time DESC;
+FROM workspace.ops.dq_results
+ORDER BY checked_at DESC;
 
 
 -- 6. Failed quality checks
 
 SELECT *
-FROM workspace.gold.data_quality_results
+FROM workspace.ops.dq_results
 WHERE status = 'FAIL'
-ORDER BY execution_time DESC;
+ORDER BY checked_at DESC;
 
 
--- 7. Data quality failures by table
+-- 7. Failures by layer and check
 
 SELECT
-    table_name,
-    COUNT(*) AS failed_checks
-FROM workspace.gold.data_quality_results
+    layer,
+    check_name,
+    severity,
+    COUNT(*) AS times_failed
+FROM workspace.ops.dq_results
 WHERE status = 'FAIL'
-GROUP BY table_name
-ORDER BY failed_checks DESC;
+GROUP BY layer, check_name, severity
+ORDER BY times_failed DESC;
 
 
--- 8. Pipeline quality score history
+-- 8. Quality score history
 
-SELECT
-    pipeline_name,
-    quality_score,
-    failed_checks,
-    execution_time
-FROM workspace.gold.pipeline_metrics
-ORDER BY execution_time DESC;
+SELECT run_id, quality_score_pct, error_checks_failed, warning_checks_failed, run_started
+FROM workspace.ops.run_summary
+WHERE checks_run IS NOT NULL
+ORDER BY run_started DESC;
 
 
--- 9. Average quality score by pipeline
+-- 9. Average quality score
 
-SELECT
-    pipeline_name,
-    ROUND(AVG(quality_score), 2) AS avg_quality_score
-FROM workspace.gold.pipeline_metrics
-GROUP BY pipeline_name
-ORDER BY avg_quality_score DESC;
+SELECT ROUND(AVG(quality_score_pct), 2) AS avg_quality_score_pct
+FROM workspace.ops.run_summary
+WHERE checks_run IS NOT NULL;
 
 
 -- 10. Processed file history
 
 SELECT *
-FROM workspace.gold.file_tracker
+FROM workspace.ops.file_tracker
 ORDER BY processed_time DESC;
 
 
 -- 11. Total processed files
 
-SELECT
-    COUNT(*) AS total_processed_files
-FROM workspace.gold.file_tracker;
+SELECT COUNT(*) AS total_processed_files
+FROM workspace.ops.file_tracker;
 
 
 -- 12. Most recently processed file
 
 SELECT *
-FROM workspace.gold.file_tracker
+FROM workspace.ops.file_tracker
 ORDER BY processed_time DESC
 LIMIT 1;
