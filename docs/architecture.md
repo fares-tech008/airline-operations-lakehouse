@@ -1,234 +1,62 @@
-# Airline Operations Lakehouse Architecture
+# Architecture
 
-## Overview
+![Architecture](architecture.png)
 
-The Airline Operations Lakehouse is built using a Medallion Architecture pattern on Databricks.
-
-The platform processes airline operations data from raw CSV files and transforms it through Bronze, Silver, and Gold layers before exposing analytical datasets and operational monitoring metrics.
-
----
-
-## Data Source
-
-Source:
-
-- U.S. Department of Transportation (DOT)
-- Bureau of Transportation Statistics (BTS)
-
-Dataset Characteristics:
-
-- 12 monthly CSV files
-- More than 7 million flight records
-- Airline operations and delay metrics
-
----
-
-## Medallion Architecture
-
-### Bronze Layer
-
-Purpose:
-
-- Ingest raw files
-- Preserve source data
-- Validate schema
-- Remove duplicates
-
-Output:
+## Flow
 
 ```text
+Raw CSV files (Databricks Volume)
+        |
+        v   01_bronze_ingestion   incremental, raw text + lineage
 bronze.bronze_flights
-```
-
----
-
-### Silver Layer
-
-Purpose:
-
-- Clean and standardize data
-- Handle missing values
-- Apply business transformations
-
-Derived Columns:
-
-```text
-IS_DELAYED
-DISTANCE_CATEGORY
-```
-
-Output:
-
-```text
+        |
+        v   02_silver_transformation   typed, cleaned, deduplicated
 silver.silver_flights
+        |
+        v   03_gold_layer   star schema + analytics tables
+gold.fact_flights  gold.dim_date  gold.dim_airport
+gold.monthly_trends  gold.airport_performance  gold.route_performance  gold.delay_causes
+        |
+        v   04_data_quality   16 checks, ERROR stops the run
+ops.dq_results
 ```
 
----
+Every step writes to `ops.audit_log`. `ops.run_summary` (view) summarises one row per run. `06_run_pipeline` runs steps 01 to 04 with a shared `run_id`.
 
-### Gold Layer
+## Design decisions
 
-Purpose:
+| Decision | Why |
+|---|---|
+| Bronze keeps everything as raw text | Bronze should hold the source as it arrived, so a bad value never stops the load |
+| `try_cast` in Silver | A bad value becomes NULL instead of failing 7 million rows |
+| Exact duplicates are removed in Silver, not Bronze | Bronze keeps the raw truth. Cleaning belongs in Silver |
+| `IS_DELAYED` is NULL for cancelled, diverted or unknown flights | "No arrival delay" is not the same as "on time". Counting it as 0 made delay rates too low |
+| Delay rate = delayed flights / completed flights | Cancelled and diverted flights have no arrival delay to measure |
+| `dim_airport` is built from origin and destination | Some airports only appear as a destination. Origin-only left holes in the dimension |
+| `dim_date` is a full calendar | A calendar built from the fact table skips days without flights |
+| Incremental loading by file name and size | A changed file is detected and its old rows are replaced, so a retry never duplicates data |
+| Tracker is written only after the data landed | A crash in the middle cannot mark a file as processed |
+| Quality results are saved before the gate raises | A failed run still leaves a record of why |
+| Rules in `00_rules.py`, shared by notebooks and tests | The tests check the exact code the pipeline runs |
 
-- Deliver analytics-ready datasets
-- Support reporting and business analysis
-
-Core Tables:
+## Gold star schema
 
 ```text
-gold.fact_flights
-gold.dim_airport
-gold.dim_date
+dim_date (DATE_KEY) <--- fact_flights ---> dim_airport (AIRPORT_CODE)   [ORIGIN]
+                                      \--> dim_airport (AIRPORT_CODE)   [DEST]
 ```
 
----
+`fact_flights` grain: one row per flight.
 
-## Star Schema Design
+## Operations tables (`ops` schema)
 
-### Fact Table
+| Object | Type | Content |
+|---|---|---|
+| `ops.file_tracker` | table | Files loaded (name, size, rows, time) |
+| `ops.audit_log` | table | One row per step per run |
+| `ops.dq_results` | table | One row per check per run |
+| `ops.run_summary` | view | One row per run with status and quality score |
 
-```text
-fact_flights
-```
+## Known limitations
 
-Contains:
-
-- Flight activity
-- Delay information
-- Operational metrics
-
-### Dimensions
-
-```text
-dim_airport
-dim_date
-```
-
-Benefits:
-
-- Faster analytical queries
-- Simplified reporting
-- Scalable warehouse design
-
----
-
-## Data Quality Framework
-
-Purpose:
-
-Validate data before downstream consumption.
-
-Checks:
-
-- Null validation
-- Duplicate detection
-- Business rule validation
-- Data freshness validation
-
-Output Table:
-
-```text
-gold.data_quality_results
-```
-
----
-
-## Audit Logging Framework
-
-Purpose:
-
-Track pipeline execution metadata.
-
-Captured Metrics:
-
-- Pipeline name
-- Start time
-- End time
-- Runtime
-- Status
-- Rows processed
-
-Output Table:
-
-```text
-gold.pipeline_audit
-```
-
----
-
-## Incremental Loading Framework
-
-Purpose:
-
-Avoid reprocessing previously ingested files.
-
-Features:
-
-- File tracking
-- Metadata storage
-- New file detection
-
-Output Table:
-
-```text
-gold.file_tracker
-```
-
----
-
-## Pipeline Monitoring Framework
-
-Purpose:
-
-Provide operational visibility.
-
-Tracked Metrics:
-
-- Runtime
-- Quality score
-- Failed checks
-- Processed rows
-
-Output Table:
-
-```text
-gold.pipeline_metrics
-```
-
----
-
-## Platform Orchestration
-
-Purpose:
-
-Coordinate framework execution and provide a centralized health view of the platform.
-
-Responsibilities:
-
-- Quality monitoring
-- Audit monitoring
-- Incremental load tracking
-- Health evaluation
-
----
-
-## Technology Stack
-
-### Platform
-
-- Databricks
-- Delta Lake
-
-### Languages
-
-- Python
-- SQL
-
-### Processing
-
-- Apache Spark
-- PySpark
-
-### Version Control
-
-- Git
-- GitHub
+See the Limitations section of the main README.

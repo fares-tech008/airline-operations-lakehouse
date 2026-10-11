@@ -1,147 +1,74 @@
 # Databricks notebook source
-# MAGIC %md
-# MAGIC # Imports
+# MAGIC %run ./00_audit_helpers
 
 # COMMAND ----------
 
-from pyspark.sql.functions import (
-    col,
-    to_date,
-    when,
-    upper
-)
+from datetime import datetime
+started = datetime.now()
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC # Read Bronze
-
-# COMMAND ----------
-
-bronze_df = spark.read.table("workspace.bronze.bronze_flights")
-
-print("Bronze Rows:", bronze_df.count())
-
-# COMMAND ----------
-
-silver_df = bronze_df
+# MAGIC %run ./00_rules
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Data Cleaning
+# MAGIC # 02 - Silver transformation
+# MAGIC Turns the raw text in Bronze into clean, typed data. The rules live in `00_rules` (and are tested in `tests/`).
 
 # COMMAND ----------
 
-silver_df.select("FL_DATE").show(10, False)
+from pyspark.sql import functions as F
 
-# COMMAND ----------
+BRONZE_TABLE = "workspace.bronze.bronze_flights"
+SILVER_TABLE = "workspace.silver.silver_flights"
 
-from pyspark.sql.functions import to_timestamp
-
-silver_df = silver_df.withColumn(
-    "FL_DATE",
-    to_timestamp(
-        col("FL_DATE"),
-        "M/d/yyyy h:mm:ss a"
-    )
-)
-
-# COMMAND ----------
-
-silver_df.printSchema()
-
-# COMMAND ----------
-
-# Standardize Airport Codes
-
-silver_df = silver_df.withColumn(
-    "ORIGIN",
-    upper(col("ORIGIN"))
-)
-
-silver_df = silver_df.withColumn(
-    "DEST",
-    upper(col("DEST"))
-)
-
-# COMMAND ----------
-
-# Delay Standard
-
-silver_df = silver_df.withColumn(
-    "IS_DELAYED",
-    when(col("ARR_DELAY") >= 15, 1)
-    .otherwise(0)
-)
-
-# COMMAND ----------
-
-# Distance Category
-
-silver_df = silver_df.withColumn(
-    "DISTANCE_CATEGORY",
-    when(col("DISTANCE") < 500, "SHORT_HAUL")
-     .when(
-         (col("DISTANCE") >= 500) &
-         (col("DISTANCE") <= 1500),
-         "MEDIUM_HAUL"
-     )
-     .otherwise("LONG_HAUL")
-
-)
-
-# COMMAND ----------
-
-print("Silver Rows:", silver_df.count())
+bronze_df = spark.table(BRONZE_TABLE)
+bronze_rows = bronze_df.count()
+print("Bronze rows:", f"{bronze_rows:,}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Feature Engineering
+# MAGIC ## Check that the columns we need exist
+
+# COMMAND ----------
+
+expected = ["FL_DATE", "ORIGIN", "DEST", "DISTANCE", "DEP_DELAY", "ARR_DELAY", "CANCELLED", "DIVERTED"]
+missing = [c for c in expected if c not in bronze_df.columns]
+assert not missing, f"Bronze is missing columns: {missing}"
+print("All expected columns found")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## IS_DELAYED
+# MAGIC ## Transform and write
 
 # COMMAND ----------
 
+silver_df = build_silver(bronze_df)
 
-silver_df.groupBy("IS_DELAYED").count().show()
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## DISTANCE_CATEGORY
-
-# COMMAND ----------
-
-silver_df.groupBy("DISTANCE_CATEGORY").count().show()
+(silver_df.write
+    .format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
+    .saveAsTable(SILVER_TABLE))
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Validation
+# MAGIC ## Check the result
 
 # COMMAND ----------
 
-silver_df.printSchema()
+silver_check = spark.table(SILVER_TABLE)
+silver_rows = silver_check.count()
+print("Bronze rows:       ", f"{bronze_rows:,}")
+print("Silver rows:       ", f"{silver_rows:,}")
+print("Duplicates removed:", f"{bronze_rows - silver_rows:,}")
+print("Rows with unreadable FL_DATE:", silver_check.filter(F.col("FL_DATE").isNull()).count())
+display(silver_check.groupBy("FLIGHT_STATUS", "IS_DELAYED").count().orderBy("FLIGHT_STATUS", "IS_DELAYED"))
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC # Write Silver Table
-
-# COMMAND ----------
-
-# Write Silver Table
-
-silver_df.write \
-    .format("delta") \
-    .mode("overwrite") \
-    .saveAsTable("silver.silver_flights")
-
-# COMMAND ----------
-
-spark.table("silver.silver_flights").count()
+log_step("02_silver", "SUCCESS", rows=silver_rows, started=started)
